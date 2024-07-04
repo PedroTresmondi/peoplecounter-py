@@ -1,5 +1,7 @@
+from datetime import time
 import numpy as np
 import cv2
+import torch
 import Person
 import time
 import tkinter as tk
@@ -17,8 +19,8 @@ class CountingLine:
     def is_crossed(self, prev_cx, prev_cy, cx, cy):
         return ((self.end_point[0] - self.start_point[0]) * (cy - self.start_point[1]) -
                 (self.end_point[1] - self.start_point[1]) * (cx - self.start_point[0])) * (
-                (self.end_point[0] - self.start_point[0]) * (prev_cy - self.start_point[1]) -
-                (self.end_point[1] - self.start_point[1]) * (prev_cx - self.start_point[0])) < 0
+                       (self.end_point[0] - self.start_point[0]) * (prev_cy - self.start_point[1]) -
+                       (self.end_point[1] - self.start_point[1]) * (prev_cx - self.start_point[0])) < 0
 
 class CountingArea:
     def __init__(self, start_point, end_point, area_type):
@@ -48,6 +50,8 @@ ix, iy = -1, -1  # Coordenadas iniciais da linha/área
 fx, fy = -1, -1  # Coordenadas finais da linha/área
 drawing_entry = True  # Flag para desenhar linhas/áreas de entrada
 drawing_mode = 'line'  # 'line' ou 'area'
+frame_skip = 3  # Processar a cada 3 frames para melhorar a detecção
+frame_count = 0
 
 # Função de callback do mouse
 def draw_shape(event, x, y, flags, param):
@@ -56,14 +60,17 @@ def draw_shape(event, x, y, flags, param):
     if event == cv2.EVENT_LBUTTONDOWN:
         drawing = True
         ix, iy = x, y
+        print(f"Mouse down: ({ix}, {iy})")
 
     elif event == cv2.EVENT_MOUSEMOVE:
         if drawing:
             fx, fy = x, y
+            print(f"Mouse move: ({fx}, {fy})")
 
     elif event == cv2.EVENT_LBUTTONUP:
         drawing = False
         fx, fy = x, y
+        print(f"Mouse up: ({fx}, {fy})")
         if drawing_mode == 'line':
             line_type = 'entry' if drawing_entry else 'exit'
             if line_type == 'entry':
@@ -123,32 +130,28 @@ area_button.pack(side=tk.LEFT)
 root.update()
 
 # Entrada de vídeo
-cap = cv2.VideoCapture("video7.mp4")
+cap = cv2.VideoCapture("video6.mp4")
 fourcc = cv2.VideoWriter_fourcc(*'XVID')
 out = cv2.VideoWriter('output1.mkv', fourcc, 20.0, (640, 480))
 
-w = cap.get(3)
-h = cap.get(4)
-frameArea = h * w
-areaTH = frameArea / 1500  # Diminuir o limiar de área para detectar contornos menores
-print('Area Threshold', areaTH)
-
-# Subtrator de fundo
-fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=True)
-
-# Elementos estruturantes para filtros morfológicos
-kernelOp = np.ones((3, 3), np.uint8)
-kernelCl = np.ones((7, 7), np.uint8)  # Reduzir o tamanho do kernel para operações morfológicas
+# Reduzir a resolução do vídeo para melhorar a performance
+scale_percent = 90  # Reduzir a 90% da resolução original
+width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) * scale_percent / 100)
+height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) * scale_percent / 100)
+dim = (width, height)
 
 # Variáveis
-font = cv2.FONT_HERSHEY_SIMPLEX
-persons = []
-max_p_age = 5
-pid = 1
+persons = []  # Adicionando a lista persons
+max_p_age = 5  # Definindo a idade máxima
+pid = 1  # Inicializando o id
+font = cv2.FONT_HERSHEY_SIMPLEX  # Definindo a fonte
+smooth_buffer = {}  # Buffer de suavização
 
-# Criar uma janela e vincular a função ao mouse
+# Carregar o modelo YOLOv5
+model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+
 cv2.namedWindow('Frame')
-cv2.setMouseCallback('Frame', draw_shape)
+cv2.setMouseCallback('Frame', draw_shape)  # Adicionando o callback do mouse
 
 while cap.isOpened():
     root.update()
@@ -161,39 +164,46 @@ while cap.isOpened():
             print('Saída:', cnt_down)
             break
 
-        fgmask = fgbg.apply(frame)
+        # Reduzir a resolução do frame
+        frame = cv2.resize(frame, dim, interpolation=cv2.INTER_AREA)
 
-        try:
-            ret, imBin = cv2.threshold(fgmask, 200, 255, cv2.THRESH_BINARY)  # Ajustar o threshold
-            mask = cv2.morphologyEx(imBin, cv2.MORPH_OPEN, kernelOp)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernelCl)
-        except:
-            print('EOF')
-            print('Entrada:', cnt_up)
-            print('Saída:', cnt_down)
-            break
+        frame_count += 1
+        if frame_count % frame_skip == 0:
+            # Detecção com YOLOv5
+            results = model(frame)
+            detections = results.pred[0].cpu().numpy()
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area > areaTH:
-                M = cv2.moments(cnt)
-                cx = int(M['m10'] / M['m00'])
-                cy = int(M['m01'] / M['m00'])
-                x, y, w, h = cv2.boundingRect(cnt)
+            # Atualizar o buffer de suavização
+            for detection in detections:
+                x1, y1, x2, y2, conf, cls = detection
+                if conf > 0.5 and int(cls) == 0:  # Filtrar apenas pessoas
+                    cx = int((x1 + x2) / 2)
+                    cy = int((y1 + y2) / 2)
+                    id = f"{cx}-{cy}"
 
+                    if id not in smooth_buffer:
+                        smooth_buffer[id] = [(cx, cy)]
+                    else:
+                        smooth_buffer[id].append((cx, cy))
+                        if len(smooth_buffer[id]) > 5:  # Manter um buffer de 5 frames
+                            smooth_buffer[id].pop(0)
+
+            for key, positions in smooth_buffer.items():
+                avg_x = int(np.mean([pos[0] for pos in positions]))
+                avg_y = int(np.mean([pos[1] for pos in positions]))
                 new = True
+
                 for i in persons:
-                    if abs(cx - i.getX()) <= w and abs(cy - i.getY()) <= h:
+                    if abs(avg_x - i.getX()) <= 30 and abs(avg_y - i.getY()) <= 30:
                         new = False
                         prev_cx, prev_cy = i.getX(), i.getY()
-                        i.updateCoords(cx, cy)
+                        i.updateCoords(avg_x, avg_y)
 
                         # Verificar se cruzou as linhas de entrada
                         for line in entry_lines:
-                            if line.is_crossed(prev_cx, prev_cy, cx, cy):
-                                if prev_cy < cy:  # Cruzando para baixo
-                                    if not i.counted_entry:
+                            if line.is_crossed(prev_cx, prev_cy, avg_x, avg_y):
+                                if prev_cy < avg_y:  # Cruzando para baixo
+                                    if not i.counted_entry and not i.counted_exit:
                                         cnt_up += 1
                                         i.counted_entry = True
                                         i.last_crossed_entry = time.time()
@@ -202,9 +212,9 @@ while cap.isOpened():
 
                         # Verificar se cruzou as linhas de saída
                         for line in exit_lines:
-                            if line.is_crossed(prev_cx, prev_cy, cx, cy):
-                                if prev_cy > cy:  # Cruzando para cima
-                                    if not i.counted_exit:
+                            if line.is_crossed(prev_cx, prev_cy, avg_x, avg_y):
+                                if prev_cy > avg_y:  # Cruzando para cima
+                                    if not i.counted_exit and not i.counted_entry:
                                         cnt_down += 1
                                         i.counted_exit = True
                                         i.last_crossed_exit = time.time()
@@ -213,7 +223,7 @@ while cap.isOpened():
 
                         # Verificar se está dentro das áreas de entrada
                         for area in entry_areas:
-                            if area.contains(cx, cy) and not i.counted_entry:
+                            if area.contains(avg_x, avg_y) and not i.counted_entry and not i.counted_exit:
                                 cnt_up += 1
                                 i.counted_entry = True
                                 print("ID:", i.getId(), 'entered area at', time.strftime("%c"))
@@ -221,7 +231,7 @@ while cap.isOpened():
 
                         # Verificar se está dentro das áreas de saída
                         for area in exit_areas:
-                            if area.contains(cx, cy) and not i.counted_exit:
+                            if area.contains(avg_x, avg_y) and not i.counted_exit and not i.counted_entry:
                                 cnt_down += 1
                                 i.counted_exit = True
                                 print("ID:", i.getId(), 'exited area at', time.strftime("%c"))
@@ -235,13 +245,13 @@ while cap.isOpened():
                         del i
 
                 if new == True:
-                    p = Person.MyPerson(pid, cx, cy, max_p_age)
+                    p = Person.MyPerson(pid, avg_x, avg_y, max_p_age)
                     persons.append(p)
                     pid += 1
 
                     # Verificar se está dentro das áreas de entrada
                     for area in entry_areas:
-                        if area.contains(cx, cy) and not p.counted_entry:
+                        if area.contains(avg_x, avg_y) and not p.counted_entry and not p.counted_exit:
                             cnt_up += 1
                             p.counted_entry = True
                             print("ID:", p.getId(), 'entered area at', time.strftime("%c"))
@@ -249,14 +259,14 @@ while cap.isOpened():
 
                     # Verificar se está dentro das áreas de saída
                     for area in exit_areas:
-                        if area.contains(cx, cy) and not p.counted_exit:
+                        if area.contains(avg_x, avg_y) and not p.counted_exit and not p.counted_entry:
                             cnt_down += 1
                             p.counted_exit = True
                             print("ID:", p.getId(), 'exited area at', time.strftime("%c"))
                             break
 
-                cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
-                img = cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.circle(frame, (avg_x, avg_y), 5, (0, 0, 255), -1)
+                img = cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
 
         for i in persons:
             cv2.putText(frame, str(i.getId()), (i.getX(), i.getY()), font, 0.3, i.getRGB(), 1, cv2.LINE_AA)
@@ -270,26 +280,26 @@ while cap.isOpened():
     cv2.putText(frame, str_down, (10, 90), font, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
     cv2.putText(frame, 'Desenhar linhas e areas de entrada/saida usando botoes', (10, 440), font, 0.5, (255, 0, 255), 1, cv2.LINE_AA)
 
-    # entrada
+    # Desenhar linhas de entrada
     for line in entry_lines:
         line.draw(frame)
 
-    # saída
+    # Desenhar linhas de saída
     for line in exit_lines:
         line.draw(frame)
 
-    # áreas de entrada
+    # Desenhar áreas de entrada
     for area in entry_areas:
         area.draw(frame)
 
-    # áreas de saída
+    # Desenhar áreas de saída
     for area in exit_areas:
         area.draw(frame)
 
     out.write(frame)
     cv2.imshow('Frame', frame)
 
-    k = cv2.waitKey(30) & 0xff
+    k = cv2.waitKey(1) & 0xff  # Reduzir o tempo de espera para 1 ms
     if k == 27:  # Tecla 'ESC' para sair
         break
 
