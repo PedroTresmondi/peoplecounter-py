@@ -193,7 +193,7 @@ while cap.isOpened():
                         for line in entry_lines:
                             if line.is_crossed(prev_cx, prev_cy, cx, cy):
                                 if prev_cy < cy:  # Cruzando para baixo
-                                    if not i.counted_entry:
+                                    if not i.counted_entry and not i.counted_exit:
                                         cnt_up += 1
                                         i.counted_entry = True
                                         i.last_crossed_entry = time.time()
@@ -204,7 +204,7 @@ while cap.isOpened():
                         for line in exit_lines:
                             if line.is_crossed(prev_cx, prev_cy, cx, cy):
                                 if prev_cy > cy:  # Cruzando para cima
-                                    if not i.counted_exit:
+                                    if not i.counted_exit and not i.counted_entry:
                                         cnt_down += 1
                                         i.counted_exit = True
                                         i.last_crossed_exit = time.time()
@@ -213,7 +213,7 @@ while cap.isOpened():
 
                         # Verificar se está dentro das áreas de entrada
                         for area in entry_areas:
-                            if area.contains(cx, cy) and not i.counted_entry:
+                            if area.contains(cx, cy) and not i.counted_entry and not i.counted_exit:
                                 cnt_up += 1
                                 i.counted_entry = True
                                 print("ID:", i.getId(), 'entered area at', time.strftime("%c"))
@@ -221,7 +221,7 @@ while cap.isOpened():
 
                         # Verificar se está dentro das áreas de saída
                         for area in exit_areas:
-                            if area.contains(cx, cy) and not i.counted_exit:
+                            if area.contains(cx, cy) and not i.counted_exit and not i.counted_entry:
                                 cnt_down += 1
                                 i.counted_exit = True
                                 print("ID:", i.getId(), 'exited area at', time.strftime("%c"))
@@ -234,14 +234,14 @@ while cap.isOpened():
                         persons.pop(index)
                         del i
 
-                if new == True:
+                if new:
                     p = Person.MyPerson(pid, cx, cy, max_p_age)
                     persons.append(p)
                     pid += 1
 
                     # Verificar se está dentro das áreas de entrada
                     for area in entry_areas:
-                        if area.contains(cx, cy) and not p.counted_entry:
+                        if area.contains(cx, cy) and not p.counted_entry and not p.counted_exit:
                             cnt_up += 1
                             p.counted_entry = True
                             print("ID:", p.getId(), 'entered area at', time.strftime("%c"))
@@ -249,7 +249,7 @@ while cap.isOpened():
 
                     # Verificar se está dentro das áreas de saída
                     for area in exit_areas:
-                        if area.contains(cx, cy) and not p.counted_exit:
+                        if area.contains(cx, cy) and not p.counted_exit and not p.counted_entry:
                             cnt_down += 1
                             p.counted_exit = True
                             print("ID:", p.getId(), 'exited area at', time.strftime("%c"))
@@ -270,19 +270,19 @@ while cap.isOpened():
     cv2.putText(frame, str_down, (10, 90), font, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
     cv2.putText(frame, 'Desenhar linhas e areas de entrada/saida usando botoes', (10, 440), font, 0.5, (255, 0, 255), 1, cv2.LINE_AA)
 
-    # entrada
+    # Desenhar linhas de entrada
     for line in entry_lines:
         line.draw(frame)
 
-    # saída
+    # Desenhar linhas de saída
     for line in exit_lines:
         line.draw(frame)
 
-    # áreas de entrada
+    # Desenhar áreas de entrada
     for area in entry_areas:
         area.draw(frame)
 
-    # áreas de saída
+    # Desenhar áreas de saída
     for area in exit_areas:
         area.draw(frame)
 
