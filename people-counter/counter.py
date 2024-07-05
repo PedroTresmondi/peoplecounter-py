@@ -1,9 +1,11 @@
 import numpy as np
 import cv2
-import yt_dlp as youtube_dl  # Use yt-dlp para garantir que você está com a versão mais recente
-import Person
+import yt_dlp as youtube_dl
 import time
 import tkinter as tk
+import torch
+from yolov5 import YOLOv5
+import Person
 
 
 # Função para obter o URL do stream de vídeo
@@ -15,6 +17,14 @@ def get_stream_url(youtube_url):
     with youtube_dl.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(youtube_url, download=False)
         return info_dict['url']
+
+
+# Inicializar o modelo YOLOv5
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+yolo = YOLOv5('yolov5n.pt', device=device)
+
+# Classes de interesse (pessoas)
+classes_of_interest = [0]
 
 
 class CountingLine:
@@ -145,7 +155,7 @@ area_button.pack(side=tk.LEFT)
 root.update()
 
 # URL da live do YouTube
-youtube_url = "https://www.youtube.com/watch?v=EE06S6rnTy4"
+youtube_url = "https://www.youtube.com/watch?v=DjdUEyjx8GM"
 stream_url = get_stream_url(youtube_url)
 
 # Entrada de vídeo
@@ -167,10 +177,6 @@ fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=True)
 kernelOp = np.ones((3, 3), np.uint8)
 kernelCl = np.ones((7, 7), np.uint8)  # Reduzir o tamanho do kernel para operações morfológicas
 
-# Inicializar o detector de pessoas HOG + SVM
-hog = cv2.HOGDescriptor()
-hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-
 # Variáveis
 font = cv2.FONT_HERSHEY_SIMPLEX
 persons = []
@@ -181,149 +187,162 @@ pid = 1
 cv2.namedWindow('Frame')
 cv2.setMouseCallback('Frame', draw_shape)
 
-while cap.isOpened():
-    root.update()
+def process_frame(frame):
+    global cnt_up, cnt_down, persons, pid
 
-    if not paused:
-        ret, frame = cap.read()
-        if not ret:
-            print('EOF')
-            print('Entrada:', cnt_up)
-            print('Saída:', cnt_down)
-            break
+    fgmask = fgbg.apply(frame)
 
-        # Reduzir o tamanho do frame
-        frame = cv2.resize(frame, (frame_width, frame_height))
+    try:
+        # Detectar pessoas usando YOLOv5
+        results = yolo.predict(frame)
+        boxes = results.xyxy[0].numpy()  # Coordenadas dos bounding boxes
 
-        fgmask = fgbg.apply(frame)
+        for box in boxes:
+            x1, y1, x2, y2, conf, cls = box
+            if cls in classes_of_interest and (x2 - x1) * (y2 - y1) > areaTH:
+                x, y, w, h = int(x1), int(y1), int(x2 - x1), int(y2 - y1)
+                cx = int(x + w / 2)
+                cy = int(y + h / 2)
 
-        try:
-            # Detectar pessoas usando HOG + SVM
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            boxes, weights = hog.detectMultiScale(gray, scale=1.05, winStride=(8, 8), padding=(8, 8),
-                                                  useMeanshiftGrouping=False)
+                new = True
+                for i in persons:
+                    if abs(cx - i.getX()) <= w and abs(cy - i.getY()) <= h:
+                        new = False
+                        prev_cx, prev_cy = i.getX(), i.getY()
+                        i.updateCoords(cx, cy)
 
-            for (x, y, w, h) in boxes:
-                if (w * h) > areaTH:
-                    # Calcular o centro do objeto detectado
-                    cx = int(x + w / 2)
-                    cy = int(y + h / 2)
+                        # Verificar se cruzou as linhas de entrada
+                        for line in entry_lines:
+                            if line.is_crossed(prev_cx, prev_cy, cx, cy):
+                                if prev_cy < cy:  # Cruzando para baixo
+                                    if not i.counted_entry and not i.counted_exit:
+                                        cnt_up += 1
+                                        i.counted_entry = True
+                                        i.last_crossed_entry = time.time()
+                                        print("ID:", i.getId(), 'crossed entry line at', time.strftime("%c"))
+                                        break
 
-                    new = True
-                    for i in persons:
-                        if abs(cx - i.getX()) <= w and abs(cy - i.getY()) <= h:
-                            new = False
-                            prev_cx, prev_cy = i.getX(), i.getY()
-                            i.updateCoords(cx, cy)
-
-                            # Verificar se cruzou as linhas de entrada
-                            for line in entry_lines:
-                                if line.is_crossed(prev_cx, prev_cy, cx, cy):
-                                    if prev_cy < cy:  # Cruzando para baixo
-                                        if not i.counted_entry and not i.counted_exit:
-                                            cnt_up += 1
-                                            i.counted_entry = True
-                                            i.last_crossed_entry = time.time()
-                                            print("ID:", i.getId(), 'crossed entry line at', time.strftime("%c"))
-                                            break
-
-                            # Verificar se cruzou as linhas de saída
-                            for line in exit_lines:
-                                if line.is_crossed(prev_cx, prev_cy, cx, cy):
-                                    if prev_cy > cy:  # Cruzando para cima
-                                        if not i.counted_exit and not i.counted_entry:
-                                            cnt_down += 1
-                                            i.counted_exit = True
-                                            i.last_crossed_exit = time.time()
-                                            print("ID:", i.getId(), 'crossed exit line at', time.strftime("%c"))
-                                            break
-
-                            # Verificar se está dentro das áreas de entrada
-                            for area in entry_areas:
-                                if area.contains(cx, cy) and not i.counted_entry and not i.counted_exit:
-                                    cnt_up += 1
-                                    i.counted_entry = True
-                                    print("ID:", i.getId(), 'entered area at', time.strftime("%c"))
-                                    break
-
-                            # Verificar se está dentro das áreas de saída
-                            for area in exit_areas:
-                                if area.contains(cx, cy) and not i.counted_exit and not i.counted_entry:
-                                    cnt_down += 1
-                                    i.counted_exit = True
-                                    print("ID:", i.getId(), 'exited area at', time.strftime("%c"))
-                                    break
-
-                            break
-
-                        if i.timedOut():
-                            index = persons.index(i)
-                            persons.pop(index)
-                            del i
-
-                    if new:
-                        p = Person.MyPerson(pid, cx, cy, max_p_age)
-                        persons.append(p)
-                        pid += 1
+                        # Verificar se cruzou as linhas de saída
+                        for line in exit_lines:
+                            if line.is_crossed(prev_cx, prev_cy, cx, cy):
+                                if prev_cy > cy:  # Cruzando para cima
+                                    if not i.counted_exit and not i.counted_entry:
+                                        cnt_down += 1
+                                        i.counted_exit = True
+                                        i.last_crossed_exit = time.time()
+                                        print("ID:", i.getId(), 'crossed exit line at', time.strftime("%c"))
+                                        break
 
                         # Verificar se está dentro das áreas de entrada
                         for area in entry_areas:
-                            if area.contains(cx, cy) and not p.counted_entry and not p.counted_exit:
+                            if area.contains(cx, cy) and not i.counted_entry and not i.counted_exit:
                                 cnt_up += 1
-                                p.counted_entry = True
-                                print("ID:", p.getId(), 'entered area at', time.strftime("%c"))
+                                i.counted_entry = True
+                                print("ID:", i.getId(), 'entered area at', time.strftime("%c"))
                                 break
 
                         # Verificar se está dentro das áreas de saída
                         for area in exit_areas:
-                            if area.contains(cx, cy) and not p.counted_exit and not p.counted_entry:
+                            if area.contains(cx, cy) and not i.counted_exit and not i.counted_entry:
                                 cnt_down += 1
-                                p.counted_exit = True
-                                print("ID:", p.getId(), 'exited area at', time.strftime("%c"))
+                                i.counted_exit = True
+                                print("ID:", i.getId(), 'exited area at', time.strftime("%c"))
                                 break
 
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                    cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
+                        break
 
-            for i in persons:
-                cv2.putText(frame, str(i.getId()), (i.getX(), i.getY()), font, 0.3, i.getRGB(), 1, cv2.LINE_AA)
+                    if i.timedOut():
+                        index = persons.index(i)
+                        persons.pop(index)
+                        del i
 
-        except Exception as e:
-            print(f'Error: {e}')
+                if new:
+                    p = Person.MyPerson(pid, cx, cy, max_p_age)
+                    persons.append(p)
+                    pid += 1
 
-    str_up = 'Entrada: ' + str(cnt_up)
-    str_down = 'Saida: ' + str(cnt_down)
+                    # Verificar se está dentro das áreas de entrada
+                    for area in entry_areas:
+                        if area.contains(cx, cy) and not p.counted_entry and not p.counted_exit:
+                            cnt_up += 1
+                            p.counted_entry = True
+                            print("ID:", p.getId(), 'entered area at', time.strftime("%c"))
+                            break
 
-    cv2.putText(frame, str_up, (10, 40), font, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
-    cv2.putText(frame, str_up, (10, 40), font, 0.5, (0, 0, 255), 1, cv2.LINE_AA)
-    cv2.putText(frame, str_down, (10, 90), font, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
-    cv2.putText(frame, str_down, (10, 90), font, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
-    cv2.putText(frame, 'Desenhar linhas e áreas de entrada/saída usando botões', (10, 440), font, 0.5, (255, 0, 255), 1,
-                cv2.LINE_AA)
+                    # Verificar se está dentro das áreas de saída
+                    for area in exit_areas:
+                        if area.contains(cx, cy) and not p.counted_exit and not p.counted_entry:
+                            cnt_down += 1
+                            p.counted_exit = True
+                            print("ID:", p.getId(), 'exited area at', time.strftime("%c"))
+                            break
 
-    # Desenhar linhas de entrada
-    for line in entry_lines:
-        line.draw(frame)
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
 
-    # Desenhar linhas de saída
-    for line in exit_lines:
-        line.draw(frame)
+        for i in persons:
+            cv2.putText(frame, str(i.getId()), (i.getX(), i.getY()), font, 0.3, i.getRGB(), 1, cv2.LINE_AA)
 
-    # Desenhar áreas de entrada
-    for area in entry_areas:
-        area.draw(frame)
+    except Exception as e:
+        print(f'Error: {e}')
 
-    # Desenhar áreas de saída
-    for area in exit_areas:
-        area.draw(frame)
+    return frame
 
-    out.write(frame)
-    cv2.imshow('Frame', frame)
 
-    k = cv2.waitKey(30) & 0xff
-    if k == 27:  # Tecla 'ESC' para sair
-        break
+def video_loop():
+    global paused
+    while cap.isOpened():
+        if not paused:
+            ret, frame = cap.read()
+            if not ret:
+                print('EOF')
+                print('Entrada:', cnt_up)
+                print('Saída:', cnt_down)
+                break
 
-cap.release()
-cv2.destroyAllWindows()
-root.destroy()
+            # Reduzir o tamanho do frame
+            frame = cv2.resize(frame, (frame_width, frame_height))
+
+            frame = process_frame(frame)
+
+            str_up = 'Entrada: ' + str(cnt_up)
+            str_down = 'Saida: ' + str(cnt_down)
+
+            cv2.putText(frame, str_up, (10, 40), font, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(frame, str_up, (10, 40), font, 0.5, (0, 0, 255), 1, cv2.LINE_AA)
+            cv2.putText(frame, str_down, (10, 90), font, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(frame, str_down, (10, 90), font, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
+            cv2.putText(frame, 'Desenhar linhas e areas de entrada/saida usando botoes', (10, 440), font, 0.5, (255, 0, 255), 1, cv2.LINE_AA)
+
+            # Desenhar linhas de entrada
+            for line in entry_lines:
+                line.draw(frame)
+
+            # Desenhar linhas de saída
+            for line in exit_lines:
+                line.draw(frame)
+
+            # Desenhar áreas de entrada
+            for area in entry_areas:
+                area.draw(frame)
+
+            # Desenhar áreas de saída
+            for area in exit_areas:
+                area.draw(frame)
+
+            out.write(frame)
+            cv2.imshow('Frame', frame)
+
+            k = cv2.waitKey(1) & 0xff
+            if k == 27:  # Tecla 'ESC' para sair
+                break
+
+        root.update_idletasks()
+        root.update()
+
+    cap.release()
+    cv2.destroyAllWindows()
+    root.destroy()
+
+
+video_loop()
