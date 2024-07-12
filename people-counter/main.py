@@ -3,7 +3,7 @@ import cv2
 import time
 import tkinter as tk
 import torch
-from yolov5 import YOLOv5
+import yolov5
 import Person
 import utils
 import globals
@@ -13,7 +13,9 @@ import gui
 
 # Inicializar o modelo YOLOv5
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-yolo = YOLOv5('yolov5n.pt', device=device)
+yolo = yolov5.load('yolov5n.pt', device=torch.cuda.current_device())
+
+
 
 # Classes de interesse (pessoas)
 classes_of_interest = [0]
@@ -44,7 +46,7 @@ def process_frame(frame):
     globals.cnt_inside_yellow = 0
 
     try:
-        results = yolo.predict(frame)
+        results = yolo(frame)
         boxes = results.xyxy[0].cpu().numpy()
 
         for box in boxes:
