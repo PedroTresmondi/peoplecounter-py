@@ -15,11 +15,8 @@ import gui
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 yolo = yolov5.load('yolov5n.pt', device=torch.cuda.current_device())
 
-
-
 # Classes de interesse (pessoas)
 classes_of_interest = [0]
-
 
 # Função de callback do mouse
 def draw_shape(event, x, y, flags, param):
@@ -39,7 +36,6 @@ def draw_shape(event, x, y, flags, param):
             globals.entry_lines.append(CountingLine((globals.ix, globals.iy), (globals.fx, globals.fy), line_type))
         elif globals.drawing_mode == 'yellow_line':
             globals.yellow_lines.append(YellowLine((globals.ix, globals.iy), (globals.fx, globals.fy)))
-
 
 # Função para processar os frames
 def process_frame(frame):
@@ -63,32 +59,23 @@ def process_frame(frame):
                         prev_cx, prev_cy = i.getX(), i.getY()
                         i.updateCoords(cx, cy)
 
-                        # Contar pessoas dentro da área amarela
-                        for area in globals.yellow_lines:
-                            if area.contains(cx, cy):
-                                if i.getId() not in globals.unique_ids_in_yellow_area:
-                                    globals.unique_ids_in_yellow_area.add(i.getId())
-                                    globals.total_unique_ids += 1
+                        # Verificar cruzamento de linhas
+                        for line in globals.entry_lines:
+                            if line.line_type == 'entry' and not i.counted_entry and line.is_crossed(prev_cx, prev_cy, cx, cy):
+                                globals.cnt_up += 1
+                                i.counted_entry = True
+                            elif line.line_type == 'exit' and not i.counted_exit and line.is_crossed(prev_cx, prev_cy, cx, cy):
+                                globals.cnt_down += 1
+                                i.counted_exit = True
 
+                        # Verificar se a pessoa está na área amarela
+                        for yellow_line in globals.yellow_lines:
+                            if yellow_line.contains(cx, cy):
                                 globals.cnt_inside_yellow += 1
-                                globals.heatmap_data.append([cx, cy])
+                                globals.total_unique_ids.add(i.getId())
 
-                                # Verificar se cruzou as linhas de entrada
-                                for line in globals.entry_lines:
-                                    if line.is_crossed(prev_cx, prev_cy, cx, cy):
-                                        if not i.counted_entry and not i.counted_exit:
-                                            globals.cnt_up += 1
-                                            i.counted_entry = True
-                                            globals.heatmap_data.append([cx, cy])
-
-                                # Verificar se cruzou as linhas de saída
-                                for line in globals.entry_lines:
-                                    if line.is_crossed(prev_cx, prev_cy, cx, cy):
-                                        if not i.counted_exit and not i.counted_entry:
-                                            globals.cnt_down += 1
-                                            i.counted_exit = True
-                                            globals.heatmap_data.append([cx, cy])
-
+                        # Atualizar os dados para o heatmap
+                        globals.heatmap_data.append([cx, cy])
                         break
 
                     if i.timedOut():
@@ -101,15 +88,7 @@ def process_frame(frame):
                     globals.persons.append(p)
                     globals.pid += 1
 
-                    for area in globals.yellow_lines:
-                        if area.contains(cx, cy):
-                            globals.cnt_inside_yellow += 1
-                            globals.heatmap_data.append([cx, cy])
-
-                            if p.getId() not in globals.unique_ids_in_yellow_area:
-                                globals.unique_ids_in_yellow_area.add(p.getId())
-                                globals.total_unique_ids += 1
-                            break
+                    globals.heatmap_data.append([cx, cy])
 
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                 cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
@@ -122,7 +101,6 @@ def process_frame(frame):
 
     return frame
 
-
 # Função principal de loop de vídeo
 def video_loop():
     while globals.cap.isOpened():
@@ -133,7 +111,7 @@ def video_loop():
                 print('Entrada:', globals.cnt_up)
                 print('Saída:', globals.cnt_down)
                 print('Dentro da área amarela:', globals.cnt_inside_yellow)
-                print('Total de IDs únicos na área amarela:', globals.total_unique_ids)
+                print('Total de IDs únicos na área amarela:', len(globals.total_unique_ids))
                 break
 
             frame = cv2.resize(frame, (globals.frame_width, globals.frame_height))
@@ -142,7 +120,7 @@ def video_loop():
             str_up = 'Entrada: ' + str(globals.cnt_up)
             str_down = 'Saida: ' + str(globals.cnt_down)
             str_inside_yellow = 'Dentro da área amarela: ' + str(globals.cnt_inside_yellow)
-            str_total_unique_ids = 'Total de IDs únicos: ' + str(globals.total_unique_ids)
+            str_total_unique_ids = 'Total de IDs únicos: ' + str(len(globals.total_unique_ids))
 
             cv2.putText(frame, str_up, (10, 40), globals.font, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
             cv2.putText(frame, str_up, (10, 40), globals.font, 0.5, (0, 0, 255), 1, cv2.LINE_AA)
@@ -177,7 +155,6 @@ def video_loop():
     globals.cap.release()
     cv2.destroyAllWindows()
     globals.root.destroy()
-
 
 # Configuração inicial
 globals.root = tk.Tk()
