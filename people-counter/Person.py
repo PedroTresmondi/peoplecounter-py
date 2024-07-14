@@ -6,9 +6,9 @@ class MyPerson:
         self.x = xi
         self.y = yi
         self.tracks = []
-        self.R = randint(0,255)
-        self.G = randint(0,255)
-        self.B = randint(0,255)
+        self.R = randint(0, 255)
+        self.G = randint(0, 255)
+        self.B = randint(0, 255)
         self.done = False
         self.state = '0'
         self.age = 0
@@ -18,7 +18,7 @@ class MyPerson:
         self.counted_exit = False
 
     def getRGB(self):
-        return (self.R,self.G,self.B)
+        return (self.R, self.G, self.B)
 
     def getTracks(self):
         return self.tracks
@@ -43,7 +43,7 @@ class MyPerson:
 
     def updateCoords(self, xn, yn):
         self.age = 0
-        self.tracks.append([self.x,self.y])
+        self.tracks.append([self.x, self.y])
         self.x = xn
         self.y = yn
 
@@ -53,10 +53,10 @@ class MyPerson:
     def timedOut(self):
         return self.done
 
-    def going_UP(self,mid_start,mid_end):
+    def going_UP(self, mid_start, mid_end):
         if len(self.tracks) >= 2:
             if self.state == '0':
-                if self.tracks[-1][1] < mid_end and self.tracks[-2][1] >= mid_end: #cruzou a linha
+                if self.tracks[-1][1] < mid_end and self.tracks[-2][1] >= mid_end:
                     self.state = '1'
                     self.dir = 'up'
                     return True
@@ -65,10 +65,10 @@ class MyPerson:
         else:
             return False
 
-    def going_DOWN(self,mid_start,mid_end):
+    def going_DOWN(self, mid_start, mid_end):
         if len(self.tracks) >= 2:
             if self.state == '0':
-                if self.tracks[-1][1] > mid_start and self.tracks[-2][1] <= mid_start: #cruzou a linha
+                if self.tracks[-1][1] > mid_start and self.tracks[-2][1] <= mid_start:
                     self.state = '1'
                     self.dir = 'down'
                     return True
