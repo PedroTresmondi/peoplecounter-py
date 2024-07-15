@@ -3,15 +3,14 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import cv2
+import time
 from supabase import create_client, Client
 import config
-import time
 
 # Supabase
 url = config.SUPABASE_URL
 key = config.SUPABASE_KEY
 supabase: Client = create_client(url, key)
-
 
 if not os.path.exists('heatmaps'):
     os.makedirs('heatmaps')
@@ -40,7 +39,6 @@ def save_heatmap(heatmap_data, last_frame, frame_width, frame_height):
     heatmap_array = np.zeros((frame_height, frame_width))
 
     radius = 15
-
     for coord in heatmap_data:
         x, y = coord[0], coord[1]
         for i in range(-radius, radius + 1):
@@ -59,6 +57,3 @@ def save_heatmap(heatmap_data, last_frame, frame_width, frame_height):
     plt.close()
 
     upload_to_supabase(file_path)
-
-# Exemplo de uso:
-# save_heatmap(globals.heatmap_data, globals.last_frame, globals.frame_width, globals.frame_height)
