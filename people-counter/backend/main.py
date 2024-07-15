@@ -194,7 +194,6 @@ stream_url = utils.get_stream_url(youtube_url)
 
 globals.cap = cv2.VideoCapture(stream_url)
 fourcc = cv2.VideoWriter_fourcc(*'XVID')
-globals.out = cv2.VideoWriter('output1.mkv', fourcc, 20.0, (640, 480))
 
 globals.frame_width = int(globals.cap.get(cv2.CAP_PROP_FRAME_WIDTH) // 2)
 globals.frame_height = int(globals.cap.get(cv2.CAP_PROP_FRAME_HEIGHT) // 2)
