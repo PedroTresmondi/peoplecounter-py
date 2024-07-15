@@ -1,7 +1,36 @@
+import os
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import cv2
+from supabase import create_client, Client
+import config
+import time
+
+# Supabase
+url = config.SUPABASE_URL
+key = config.SUPABASE_KEY
+supabase: Client = create_client(url, key)
+
+
+if not os.path.exists('heatmaps'):
+    os.makedirs('heatmaps')
+
+def upload_to_supabase(file_path):
+    try:
+        with open(file_path, 'rb') as file:
+            data = file.read()
+        # Adicionando timestamp ao nome do arquivo
+        timestamp = int(time.time())
+        file_name = f'heatmaps/heatmap_{timestamp}.png'
+        response = supabase.storage.from_('heatmap').upload(file_name, data)
+        print(f"Upload successful: {response}")
+        return response
+    except Exception as e:
+        print(f"Error uploading to Supabase: {e}")
+        if hasattr(e, 'response'):
+            print(f"Supabase error response: {e.response.text}")
+        return None
 
 def save_heatmap(heatmap_data, last_frame, frame_width, frame_height):
     if len(heatmap_data) == 0:
@@ -23,5 +52,13 @@ def save_heatmap(heatmap_data, last_frame, frame_width, frame_height):
     sns.heatmap(heatmap_array, cmap='RdYlGn_r', cbar=True, alpha=0.5, zorder=2)
     plt.imshow(cv2.cvtColor(last_frame, cv2.COLOR_BGR2RGB), aspect='auto', zorder=1)
     plt.axis('off')
-    plt.savefig('heatmap.png', bbox_inches='tight', pad_inches=0)
+    # Adicionando timestamp ao salvar o arquivo
+    timestamp = int(time.time())
+    file_path = f'heatmaps/heatmap_{timestamp}.png'
+    plt.savefig(file_path, bbox_inches='tight', pad_inches=0)
     plt.close()
+
+    upload_to_supabase(file_path)
+
+# Exemplo de uso:
+# save_heatmap(globals.heatmap_data, globals.last_frame, globals.frame_width, globals.frame_height)

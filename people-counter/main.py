@@ -8,11 +8,16 @@ import Person
 import utils
 import globals
 from counting import CountingLine, YellowLine
-import heatmap
+from heatmap import save_heatmap
 import gui
+import schedule
+
+def job():
+    save_heatmap(globals.heatmap_data, globals.last_frame, globals.frame_width, globals.frame_height)
+
+schedule.every(10).seconds.do(job)  # Executar a cada 10 segundos
 
 # Inicializar o modelo YOLOv5
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
 yolo = yolov5.load('yolov5n.pt', device=torch.cuda.current_device())
 
 # Classes de interesse (pessoas)
@@ -151,7 +156,10 @@ def video_loop():
         globals.root.update_idletasks()
         globals.root.update()
 
-    heatmap.save_heatmap(globals.heatmap_data, globals.last_frame, globals.frame_width, globals.frame_height)
+        schedule.run_pending()
+        time.sleep(0.01)  # Reduzir o tempo de espera para diminuir o travamento
+
+    save_heatmap(globals.heatmap_data, globals.last_frame, globals.frame_width, globals.frame_height)
     globals.cap.release()
     cv2.destroyAllWindows()
     globals.root.destroy()

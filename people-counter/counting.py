@@ -26,6 +26,5 @@ class YellowLine:
         cv2.line(frame, self.start_point, self.end_point, color, 2)
 
     def contains(self, x, y):
-        # Ajuste conforme necessário para a lógica de conter pontos dentro da linha amarela
         return (self.start_point[0] <= x <= self.end_point[0] and
                 self.start_point[1] <= y <= self.end_point[1])
